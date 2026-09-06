@@ -189,6 +189,16 @@ function App() {
   const allVisibleSelected = Boolean(visibleRepositories.length)
     && visibleRepositories.every((repository) => activeAccount?.selectedRepositories.includes(repository.full_name));
 
+  // Which panels the current view and connection state put on screen. Sections
+  // that read `activeAccount` still test it inline so it narrows to non-null.
+  const showingPullRequests = view === "pull-requests";
+  const showingSkills = view === "skills";
+  const showConnectForm = showingPullRequests && showConnect;
+  const showError = showingPullRequests && Boolean(error);
+  const showRepositoryPicker = showingPullRequests && !showConnect;
+  const showResults = showingPullRequests && hasLoaded && Boolean(activeAccount);
+  const showEmptyState = showingPullRequests && !activeAccount && !showConnect;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -210,13 +220,13 @@ function App() {
 
       <main className="main-content">
         <header className="page-header">
-          {view === "skills"
+          {showingSkills
             ? <div><p className="eyebrow">LOCAL</p><h1>Skills</h1><p className="page-description">Read the skills available to build flows from.</p></div>
             : <div><p className="eyebrow">GITHUB</p><h1>My pull requests</h1><p className="page-description">Choose the repositories that belong in this view.</p></div>}
-          {view === "pull-requests" && activeAccount && <div className="account-badge"><img alt="" src={activeAccount.avatar_url} /><span><strong>{activeAccount.name || activeAccount.login}</strong><small>@{activeAccount.login}</small></span></div>}
+          {showingPullRequests && activeAccount && <div className="account-badge"><img alt="" src={activeAccount.avatar_url} /><span><strong>{activeAccount.name || activeAccount.login}</strong><small>@{activeAccount.login}</small></span></div>}
         </header>
 
-        {view === "pull-requests" && showConnect && (
+        {showConnectForm && (
           <section className="connection-card" aria-labelledby="connect-title">
             <div className="connection-copy">
               <div className="github-mark" aria-hidden="true">GH</div>
@@ -233,9 +243,9 @@ function App() {
           </section>
         )}
 
-        {view === "pull-requests" && error && <div className="error-message" role="alert">{error}</div>}
+        {showError && <div className="error-message" role="alert">{error}</div>}
 
-        {view === "pull-requests" && activeAccount && !showConnect && (
+        {showRepositoryPicker && activeAccount && (
           <section className="repository-card" aria-labelledby="repository-title">
             <div className="repository-header">
               <div><p className="section-kicker">CUSTOMIZE VIEW</p><h2 id="repository-title">Choose repositories</h2><p>Only pull requests opened by @{activeAccount.login} will be included.</p></div>
@@ -267,7 +277,7 @@ function App() {
           </section>
         )}
 
-        {view === "pull-requests" && activeAccount && hasLoaded && (
+        {showResults && (
           <section className="results" aria-live="polite">
             <div className="results-toolbar">
               <div className="filter-tabs" role="tablist" aria-label="Filter pull requests">
@@ -292,8 +302,8 @@ function App() {
           </section>
         )}
 
-        {view === "pull-requests" && !activeAccount && !showConnect && <section className="empty-state"><div className="empty-illustration"><PullIcon size={34} /></div><h2>Connect your first GitHub account</h2><p>Add a fine-grained token to discover and select the repositories you can access.</p></section>}
-        {view === "skills" && <SkillInventory searchIcon={<SearchIcon />} />}
+        {showEmptyState && <section className="empty-state"><div className="empty-illustration"><PullIcon size={34} /></div><h2>Connect your first GitHub account</h2><p>Add a fine-grained token to discover and select the repositories you can access.</p></section>}
+        {showingSkills && <SkillInventory searchIcon={<SearchIcon />} />}
       </main>
     </div>
   );
