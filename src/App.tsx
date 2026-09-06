@@ -1,61 +1,25 @@
 import { FormEvent, ReactNode, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+
+import type { ConnectedAccount } from "./features/accounts/types";
+import {
+  countByFilter,
+  filterPullRequests,
+  filters,
+  pullRequestStatus,
+  type Filter,
+} from "./features/pull-requests/filters";
+import { filterRepositories } from "./features/repositories/filters";
+import { SkillInventory } from "./features/skills/SkillInventory";
+import { relativeDate } from "./lib/date";
+import {
+  commandErrorMessage,
+  connectGitHubAccount,
+  disconnectGitHubAccount,
+  listAuthoredPullRequests,
+} from "./lib/tauri/github";
+import type { PullRequest } from "./lib/tauri/types";
 import "./App.css";
-
-type GitHubUser = {
-  id: number;
-  login: string;
-  name: string | null;
-  avatar_url: string;
-};
-
-type Repository = {
-  id: number;
-  name: string;
-  full_name: string;
-  private: boolean;
-  description: string | null;
-  language: string | null;
-  updated_at: string;
-  owner: { login: string; avatar_url: string };
-};
-
-type ConnectedAccount = GitHubUser & {
-  token: string;
-  repositories: Repository[];
-  selectedRepositories: string[];
-};
-
-type ConnectionResponse = {
-  account: GitHubUser;
-  repositories: Repository[];
-};
-
-type PullRequest = {
-  id: number;
-  number: number;
-  title: string;
-  state: "open" | "closed";
-  draft: boolean;
-  merged_at: string | null;
-  created_at: string;
-  updated_at: string;
-  html_url: string;
-  repository_full_name: string;
-  user: { login: string; avatar_url: string };
-  head: { ref: string };
-  base: { ref: string };
-};
-
-type Filter = "all" | "open" | "merged" | "closed";
-
-const filters: { label: string; value: Filter }[] = [
-  { label: "All", value: "all" },
-  { label: "Open", value: "open" },
-  { label: "Merged", value: "merged" },
-  { label: "Closed", value: "closed" },
-];
 
 function Icon({ children, size = 18 }: { children: ReactNode; size?: number }) {
   return <svg aria-hidden="true" className="icon" fill="none" height={size} viewBox="0 0 24 24" width={size}>{children}</svg>;
@@ -69,20 +33,24 @@ const PullIcon = ({ size }: { size?: number }) => (
   </Icon>
 );
 
-function relativeDate(value: string) {
-  const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
-  const formatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-  const ranges: [Intl.RelativeTimeFormatUnit, number][] = [
-    ["year", 31_536_000], ["month", 2_592_000], ["week", 604_800],
-    ["day", 86_400], ["hour", 3_600], ["minute", 60],
-  ];
-  for (const [unit, amount] of ranges) {
-    if (Math.abs(seconds) >= amount) return formatter.format(Math.round(seconds / amount), unit);
-  }
-  return "just now";
-}
+const SearchIcon = () => (
+  <Icon size={17}>
+    <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2" />
+    <path d="m16 16 4 4" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+  </Icon>
+);
+
+const SkillIcon = ({ size }: { size?: number }) => (
+  <Icon size={size}>
+    <path d="M12 3 4 7v6c0 4 3.4 7.2 8 8 4.6-.8 8-4 8-8V7l-8-4Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="2" />
+    <path d="m9 12 2 2 4-4" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+  </Icon>
+);
+
+type View = "pull-requests" | "skills";
 
 function App() {
+  const [view, setView] = useState<View>("pull-requests");
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<number | null>(null);
   const [tokenInput, setTokenInput] = useState("");
@@ -97,33 +65,17 @@ function App() {
   const [error, setError] = useState("");
 
   const activeAccount = accounts.find((account) => account.id === activeAccountId) ?? null;
-  const visibleRepositories = useMemo(() => {
-    const normalized = repositoryQuery.trim().toLowerCase();
-    return activeAccount?.repositories.filter((repository) =>
-      !normalized || repository.full_name.toLowerCase().includes(normalized)
-        || repository.description?.toLowerCase().includes(normalized),
-    ) ?? [];
-  }, [activeAccount, repositoryQuery]);
+  const visibleRepositories = useMemo(
+    () => filterRepositories(activeAccount?.repositories ?? [], repositoryQuery),
+    [activeAccount, repositoryQuery],
+  );
 
-  const counts = useMemo(() => ({
-    all: pullRequests.length,
-    open: pullRequests.filter((pr) => pr.state === "open").length,
-    merged: pullRequests.filter((pr) => Boolean(pr.merged_at)).length,
-    closed: pullRequests.filter((pr) => pr.state === "closed" && !pr.merged_at).length,
-  }), [pullRequests]);
+  const counts = useMemo(() => countByFilter(pullRequests), [pullRequests]);
 
-  const visiblePullRequests = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return pullRequests.filter((pr) => {
-      const matchesFilter = activeFilter === "all"
-        || (activeFilter === "open" && pr.state === "open")
-        || (activeFilter === "merged" && Boolean(pr.merged_at))
-        || (activeFilter === "closed" && pr.state === "closed" && !pr.merged_at);
-      const matchesQuery = !normalizedQuery || pr.title.toLowerCase().includes(normalizedQuery)
-        || pr.repository_full_name.toLowerCase().includes(normalizedQuery) || String(pr.number).includes(normalizedQuery);
-      return matchesFilter && matchesQuery;
-    });
-  }, [activeFilter, pullRequests, query]);
+  const visiblePullRequests = useMemo(
+    () => filterPullRequests(pullRequests, activeFilter, query),
+    [activeFilter, pullRequests, query],
+  );
 
   function updateActiveAccount(update: (account: ConnectedAccount) => ConnectedAccount) {
     setAccounts((current) => current.map((account) => account.id === activeAccountId ? update(account) : account));
@@ -138,12 +90,11 @@ function App() {
     setConnecting(true);
     setError("");
     try {
-      const result = await invoke<ConnectionResponse>("connect_github_account", { token: tokenInput.trim() });
+      const result = await connectGitHubAccount(tokenInput);
       const existing = accounts.find((account) => account.id === result.account.id);
       const availableNames = new Set(result.repositories.map((repository) => repository.full_name));
       const connected: ConnectedAccount = {
         ...result.account,
-        token: tokenInput.trim(),
         repositories: result.repositories,
         selectedRepositories: existing?.selectedRepositories.filter((name) => availableNames.has(name)) ?? [],
       };
@@ -155,7 +106,7 @@ function App() {
       setHasLoaded(false);
       setRepositoryQuery("");
     } catch (reason) {
-      setError(typeof reason === "string" ? reason : "Unable to connect this GitHub account.");
+      setError(commandErrorMessage(reason, "Unable to connect this GitHub account."));
     } finally {
       setConnecting(false);
     }
@@ -170,8 +121,13 @@ function App() {
     setError("");
   }
 
-  function disconnectAccount() {
+  async function disconnectAccount() {
     if (!activeAccount) return;
+    try {
+      await disconnectGitHubAccount(activeAccount.id);
+    } catch {
+      // The token is dropped when the app closes regardless; clear the UI anyway.
+    }
     const remaining = accounts.filter((account) => account.id !== activeAccount.id);
     setAccounts(remaining);
     setActiveAccountId(remaining[0]?.id ?? null);
@@ -213,10 +169,9 @@ function App() {
     setLoadingPullRequests(true);
     setError("");
     try {
-      const results = await invoke<PullRequest[]>("list_authored_pull_requests", {
+      const results = await listAuthoredPullRequests({
+        accountId: activeAccount.id,
         repositories: activeAccount.selectedRepositories,
-        author: activeAccount.login,
-        token: activeAccount.token,
       });
       setPullRequests(results);
       setHasLoaded(true);
@@ -225,7 +180,7 @@ function App() {
     } catch (reason) {
       setPullRequests([]);
       setHasLoaded(false);
-      setError(typeof reason === "string" ? reason : "Unable to load pull requests.");
+      setError(commandErrorMessage(reason, "Unable to load pull requests."));
     } finally {
       setLoadingPullRequests(false);
     }
@@ -240,7 +195,8 @@ function App() {
         <div className="brand"><div className="brand-mark"><PullIcon size={17} /></div><span>Skillflow</span></div>
         <nav aria-label="Main navigation">
           <p className="nav-heading">Workspace</p>
-          <button className="nav-item active" type="button"><PullIcon />Pull requests</button>
+          <button className={`nav-item ${view === "pull-requests" ? "active" : ""}`} onClick={() => setView("pull-requests")} type="button"><PullIcon />Pull requests</button>
+          <button className={`nav-item ${view === "skills" ? "active" : ""}`} onClick={() => setView("skills")} type="button"><SkillIcon />Skills</button>
           {accounts.length > 0 && <p className="nav-heading accounts-heading">Accounts</p>}
           {accounts.map((account) => (
             <button className={`account-nav ${account.id === activeAccountId ? "active" : ""}`} key={account.id} onClick={() => selectAccount(account.id)} type="button">
@@ -254,15 +210,17 @@ function App() {
 
       <main className="main-content">
         <header className="page-header">
-          <div><p className="eyebrow">GITHUB</p><h1>My pull requests</h1><p className="page-description">Choose the repositories that belong in this view.</p></div>
-          {activeAccount && <div className="account-badge"><img alt="" src={activeAccount.avatar_url} /><span><strong>{activeAccount.name || activeAccount.login}</strong><small>@{activeAccount.login}</small></span></div>}
+          {view === "skills"
+            ? <div><p className="eyebrow">LOCAL</p><h1>Skills</h1><p className="page-description">Read the skills available to build flows from.</p></div>
+            : <div><p className="eyebrow">GITHUB</p><h1>My pull requests</h1><p className="page-description">Choose the repositories that belong in this view.</p></div>}
+          {view === "pull-requests" && activeAccount && <div className="account-badge"><img alt="" src={activeAccount.avatar_url} /><span><strong>{activeAccount.name || activeAccount.login}</strong><small>@{activeAccount.login}</small></span></div>}
         </header>
 
-        {showConnect && (
+        {view === "pull-requests" && showConnect && (
           <section className="connection-card" aria-labelledby="connect-title">
             <div className="connection-copy">
               <div className="github-mark" aria-hidden="true">GH</div>
-              <div><h2 id="connect-title">Connect a GitHub account</h2><p>Use a fine-grained token with Metadata and Pull requests read access. The token stays in memory and is cleared when Skillflow closes.</p></div>
+              <div><h2 id="connect-title">Connect a GitHub account</h2><p>Use a fine-grained token with Metadata and Pull requests read access. The token is held by Skillflow&rsquo;s native layer, never by this window, and is cleared when the app closes.</p></div>
               {accounts.length > 0 && <button className="close-button" aria-label="Close account connection" onClick={() => setShowConnect(false)} type="button">×</button>}
             </div>
             <form className="token-form" onSubmit={connectAccount}>
@@ -275,16 +233,16 @@ function App() {
           </section>
         )}
 
-        {error && <div className="error-message" role="alert">{error}</div>}
+        {view === "pull-requests" && error && <div className="error-message" role="alert">{error}</div>}
 
-        {activeAccount && !showConnect && (
+        {view === "pull-requests" && activeAccount && !showConnect && (
           <section className="repository-card" aria-labelledby="repository-title">
             <div className="repository-header">
               <div><p className="section-kicker">CUSTOMIZE VIEW</p><h2 id="repository-title">Choose repositories</h2><p>Only pull requests opened by @{activeAccount.login} will be included.</p></div>
               <button className="disconnect-button" onClick={disconnectAccount} type="button">Disconnect account</button>
             </div>
             <div className="repository-toolbar">
-              <div className="repo-search"><Icon size={17}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2" /><path d="m16 16 4 4" stroke="currentColor" strokeLinecap="round" strokeWidth="2" /></Icon><input aria-label="Search repositories" onChange={(event) => setRepositoryQuery(event.target.value)} placeholder="Search repositories…" value={repositoryQuery} /></div>
+              <div className="repo-search"><SearchIcon /><input aria-label="Search repositories" onChange={(event) => setRepositoryQuery(event.target.value)} placeholder="Search repositories…" value={repositoryQuery} /></div>
               <button className="select-all-button" onClick={toggleVisibleRepositories} type="button">{allVisibleSelected ? "Clear visible" : "Select visible"}</button>
               <span className="selection-count">{activeAccount.selectedRepositories.length} selected</span>
             </div>
@@ -309,17 +267,17 @@ function App() {
           </section>
         )}
 
-        {activeAccount && hasLoaded && (
+        {view === "pull-requests" && activeAccount && hasLoaded && (
           <section className="results" aria-live="polite">
             <div className="results-toolbar">
               <div className="filter-tabs" role="tablist" aria-label="Filter pull requests">
                 {filters.map((filter) => <button aria-selected={activeFilter === filter.value} className={activeFilter === filter.value ? "selected" : ""} key={filter.value} onClick={() => setActiveFilter(filter.value)} role="tab" type="button">{filter.label}<span>{counts[filter.value]}</span></button>)}
               </div>
-              <div className="search-box"><Icon size={17}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2" /><path d="m16 16 4 4" stroke="currentColor" strokeLinecap="round" strokeWidth="2" /></Icon><input aria-label="Search pull requests" onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests…" value={query} /></div>
+              <div className="search-box"><SearchIcon /><input aria-label="Search pull requests" onChange={(event) => setQuery(event.target.value)} placeholder="Search pull requests…" value={query} /></div>
             </div>
             <div className="pr-list">
               {visiblePullRequests.length ? visiblePullRequests.map((pr) => {
-                const status = pr.merged_at ? "merged" : pr.state;
+                const status = pullRequestStatus(pr);
                 return (
                   <button className="pr-row" key={pr.id} onClick={() => openUrl(pr.html_url)} type="button">
                     <div className={`pr-status ${status}`}><PullIcon size={18} /></div>
@@ -334,7 +292,8 @@ function App() {
           </section>
         )}
 
-        {!activeAccount && !showConnect && <section className="empty-state"><div className="empty-illustration"><PullIcon size={34} /></div><h2>Connect your first GitHub account</h2><p>Add a fine-grained token to discover and select the repositories you can access.</p></section>}
+        {view === "pull-requests" && !activeAccount && !showConnect && <section className="empty-state"><div className="empty-illustration"><PullIcon size={34} /></div><h2>Connect your first GitHub account</h2><p>Add a fine-grained token to discover and select the repositories you can access.</p></section>}
+        {view === "skills" && <SkillInventory searchIcon={<SearchIcon />} />}
       </main>
     </div>
   );
