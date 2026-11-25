@@ -157,3 +157,15 @@ input::placeholder { color: #a9abb0; }
   .pr-row { grid-template-columns: 32px minmax(220px, 1fr) 70px 18px; }
   .updated { display: none; }
 }
+
+/* Skill inventory */
+.skill-header-actions { align-items: center; display: flex; gap: 8px; }
+.skill-row { align-items: center; border-bottom: 1px solid #ececed; display: flex; gap: 14px; padding: 12px 14px; }
+.skill-row:last-child { border-bottom: none; }
+.skill-info { flex: 1; min-width: 0; }
+.skill-title-line { align-items: center; display: flex; gap: 8px; }
+.skill-title-line strong { color: #1b1c1e; font-size: 13px; }
+.skill-info p { color: #5e6166; font-size: 12px; margin: 3px 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.invocable-badge { background: #eef2ff; border-radius: 5px; color: #4655c4; font-size: 10px; font-weight: 600; padding: 2px 6px; }
+.skill-path { background: #f4f4f5; border-radius: 4px; color: #6b6e73; font-size: 10.5px; padding: 2px 5px; }
+.tool-count { color: #6b6e73; flex-shrink: 0; font-size: 11px; white-space: nowrap; }
